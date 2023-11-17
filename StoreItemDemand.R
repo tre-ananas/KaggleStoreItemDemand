@@ -87,15 +87,11 @@ library(vroom)
 library(tidyverse)
 library(timetk)
 library(patchwork)
-library(tidyverse)
 library(embed)
 library(lubridate)
 library(parsnip)
 library(ranger)
 library(workflows)
-
-library(tidyverse)
-library(vroom)
 library(tidymodels)
 library(poissonreg)
 library(rpart)
@@ -209,13 +205,139 @@ cv_results %>% collect_metrics() %>%
   filter(.metric == "smape")
 # mean for best_tune is 18.6
 
+#################################################################
+#################################################################
+# Exponential Smoothing for a Single Store-Item Combo ###########
+#################################################################
+#################################################################
+
+# Load Libraries
+library(vroom)
+library(tidyverse)
+library(modeltime)
+library(timetk)
+library(tidymodels)
+library(patchwork)
+
+# Data
+train <- vroom("train.csv")
+test <- vroom("test.csv")
+
+# Subset two store-item combos w my favorite numbers
+s4_i17 <- train %>%
+  filter(store == 4, item == 17)
+
+s6_i13 <- train %>%
+  filter(store == 6, item == 13)
 
 
 
 
+# Cross Validation
+
+# CV for store 4 item 17
+cv_split_4_17 <- time_series_split(s4_i17,
+                                   assess = "3 months",
+                                   cumulative = TRUE)
+cv_preds_4_17 <- cv_split_4_17 %>%
+  tk_time_series_cv_plan() %>% # put into data frame
+  plot_time_series_cv_plan(date, sales, .interactive = FALSE)
+cv_preds_4_17
+
+# CV for store 6 item 13
+cv_split_6_13 <- time_series_split(s6_i13,
+                                   assess = "3 months",
+                                   cumulative = TRUE)
+cv_preds_6_13 <- cv_split_6_13 %>%
+  tk_time_series_cv_plan() %>% # put into data frame
+  plot_time_series_cv_plan(date, sales, .interactive = FALSE)
+cv_preds_6_13
 
 
 
+# Exponential smoothing
+
+# ES for store 4 item 17
+es_model_4_17 <- exp_smoothing() %>%
+  set_engine('ets') %>%
+  fit(sales~date, data = training(cv_split_4_17))
+
+# Cross-validate to tune model
+cv_results_4_17 <- modeltime_calibrate(es_model_4_17,
+                                       new_data = testing(cv_split_4_17))
+
+# Visualize CV results
+cv_results_vis_4_17 <- cv_results_4_17 %>%
+  modeltime_forecast(
+    new_data = testing(cv_split_4_17),
+    actual_data = s4_i17
+  ) %>%
+  plot_modeltime_forecast(.interactive = FALSE)
+cv_results_vis_4_17
+
+# ES for store 6 item 13
+es_model_6_13 <- exp_smoothing() %>%
+  set_engine('ets') %>%
+  fit(sales~date, data = training(cv_split_6_13))
+
+# Cross-validate to tune model
+cv_results_6_13 <- modeltime_calibrate(es_model_6_13,
+                                       new_data = testing(cv_split_6_13))
+
+# Visualize CV results
+cv_results_vis_6_13 <- cv_results_6_13 %>%
+  modeltime_forecast(
+    new_data = testing(cv_split_6_13),
+    actual_data = s6_i13
+  ) %>%
+  plot_modeltime_forecast(.interactive = FALSE)
+cv_results_vis_6_13
+
+
+
+
+# Refit to all data then forecast for store 4 item 17
+
+es_fullfit_4_17 <- cv_results_4_17 %>%
+  modeltime_refit(data = s4_i17)
+
+es_preds_4_17 <- es_fullfit_4_17 %>%
+  modeltime_forecast(h = '3 months') %>%
+  rename(date = .index, sales = .value)%>%
+  select(date, sales) %>%
+  full_join(., y = test, by = "date") %>%
+  select(id, sales)
+  
+es_fullfit_plot_4_17 <- es_fullfit_4_17 %>%
+  modeltime_forecast(h = '3 months', actual_data = s4_i17) %>%
+  plot_modeltime_forecast(.interactive = FALSE)
+es_fullfit_plot_4_17
+
+# Refit to all data then forecast for store 6 item 13
+es_fullfit_6_13 <- cv_results_6_13 %>%
+  modeltime_refit(data = s6_i13)
+
+es_preds_6_13 <- es_fullfit_6_13 %>%
+  modeltime_forecast(h = '3 months') %>%
+  rename(date = .index, sales = .value)%>%
+  select(date, sales) %>%
+  full_join(., y = test, by = "date") %>%
+  select(id, sales)
+  
+es_fullfit_plot_6_13 <- es_fullfit_6_13 %>%
+  modeltime_forecast(h = '3 months', actual_data = s6_i13) %>%
+  plot_modeltime_forecast(.interactive = FALSE)
+es_fullfit_plot_6_13
+
+
+
+
+# Plots
+plotly::subplot(cv_results_vis_4_17, cv_results_vis_6_13, es_fullfit_plot_4_17, es_fullfit_plot_6_13, nrows = 2)
+
+# Four-Way Plot
+fourway <- (cv_results_vis_4_17 + cv_results_vis_6_13) / (es_fullfit_plot_4_17 + es_fullfit_plot_6_13)
+fourway
 
 
 
