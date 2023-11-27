@@ -74,11 +74,11 @@ acf_4_4 <- train[train$store == 4 & train$item == 4, ] %>%
 fourway_acf <- (acf_1_1 + acf_2_2) / (acf_3_3 + acf_4_4)
 fourway_acf
 
-#################################################################
-#################################################################
-# Feature Engineering for a Single Store-Item Combo #############
-#################################################################
-#################################################################
+###################################################################################
+###################################################################################
+# Feature Engineering and Random Forest for a Single Store-Item Combo #############
+###################################################################################
+###################################################################################
 
 ### Load Data and Packages ###
 
@@ -219,7 +219,12 @@ library(timetk)
 library(tidymodels)
 library(patchwork)
 
-# Data
+
+
+
+# Get Data
+
+# Load Data
 train <- vroom("train.csv")
 test <- vroom("test.csv")
 
@@ -338,6 +343,198 @@ plotly::subplot(cv_results_vis_4_17, cv_results_vis_6_13, es_fullfit_plot_4_17, 
 # Four-Way Plot
 fourway <- (cv_results_vis_4_17 + cv_results_vis_6_13) / (es_fullfit_plot_4_17 + es_fullfit_plot_6_13)
 fourway
+
+#################################################################
+#################################################################
+# SARIMA for a Couple Store-Item Combos               ###########
+#################################################################
+#################################################################
+
+# Load Libraries
+library(vroom)
+library(tidyverse)
+library(modeltime)
+library(timetk)
+library(tidymodels)
+library(patchwork)
+library(forecast)
+library(embed)
+library(lubridate)
+library(parsnip)
+library(workflows)
+library(ggplot2)
+
+
+
+
+# Get Data
+
+# Load Data
+train <- vroom("train.csv")
+test <- vroom("test.csv")
+
+# Subset two store-item combos w my favorite numbers
+s4_i17 <- train %>%
+  filter(store == 4, item == 17)
+
+s6_i13 <- train %>%
+  filter(store == 6, item == 13)
+
+test_s4_i17 <- test %>%
+  filter(store == 4, item == 17)
+
+test_s6_i13 <- test %>%
+  filter(store == 6, item == 13)
+
+
+
+
+# Recipe for Linear Model Part
+# Create Recipe
+rec <- recipe(sales ~ ., data = s4_i17) %>%
+  step_rm(c('store', 'item')) %>%
+  step_mutate_at(all_integer_predictors(), fn = factor) %>%
+  step_mutate(cumulative_sales = cumsum(sales)) %>%
+  step_dummy(all_nominal_predictors()) # Make nominal predictors into dummy variables
+
+# Prep, Bake, and View Recipe
+prepped <- prep(rec)
+bake(prepped, s4_i17)
+
+
+
+
+# Cross Validation Splits
+
+# CV for store 4 item 17
+cv_split_4_17 <- time_series_split(s4_i17,
+                                   assess = "3 months",
+                                   cumulative = TRUE)
+cv_preds_4_17 <- cv_split_4_17 %>%
+  tk_time_series_cv_plan() %>% # put into data frame
+  plot_time_series_cv_plan(date, sales, .interactive = FALSE)
+cv_preds_4_17
+
+# CV for store 6 item 13
+cv_split_6_13 <- time_series_split(s6_i13,
+                                   assess = "3 months",
+                                   cumulative = TRUE)
+cv_preds_6_13 <- cv_split_6_13 %>%
+  tk_time_series_cv_plan() %>% # put into data frame
+  plot_time_series_cv_plan(date, sales, .interactive = FALSE)
+cv_preds_6_13
+
+
+
+
+# ARIMA
+
+# ARIMA Model
+arima_model <- arima_reg(seasonal_period = 365,
+                         non_seasonal_ar = 5, # default max p to tune
+                         non_seasonal_ma = 5, # default max q to tune
+                         seasonal_ar = 2, # default max P to tune
+                         seasonal_ma = 2, # default max Q to tune
+                         non_seasonal_differences = 2, # default max d to tune
+                         seasonal_differences = 2) %>% # default max D to tune
+  set_engine('auto_arima')
+
+# ARIMA Workflows
+arima_wf_4_17 <- workflow() %>%
+  add_recipe(rec) %>%
+  add_model(arima_model) %>%
+  fit(data = training(cv_split_4_17))
+
+arima_wf_6_13 <- workflow() %>%
+  add_recipe(rec) %>%
+  add_model(arima_model) %>%
+  fit(data = training(cv_split_6_13))
+
+
+
+
+
+# Calibrate/Tune Workflows
+cv_results_4_17 <- modeltime_calibrate(arima_wf_4_17,
+                                       new_data = testing(cv_split_4_17))
+
+cv_results_6_13 <- modeltime_calibrate(arima_wf_6_13,
+                                       new_data = testing(cv_split_6_13))
+
+# Visualize and Evaluate CV Accuracies
+cv_results_vis_4_17 <- cv_results_4_17 %>%
+  modeltime_forecast(
+    new_data = testing(cv_split_4_17),
+    actual_data = s4_i17
+  ) %>%
+  plot_modeltime_forecast(.interactive = FALSE) +
+  labs(title = 'CV Predictions and True Obs, Store 4 Item 17')
+cv_results_vis_4_17
+
+cv_results_vis_6_13 <- cv_results_6_13 %>%
+  modeltime_forecast(
+    new_data = testing(cv_split_6_13),
+    actual_data = s6_i13
+  ) %>%
+  plot_modeltime_forecast(.interactive = FALSE) +
+  labs(title = 'CV Predictions and True Obs, Store 6 Item 13')
+cv_results_vis_6_13
+
+
+
+
+# Refit Best Model to Entire Data and Predict
+arima_fullfit_4_17 <- cv_results_4_17 %>%
+  modeltime_refit(data = s4_i17)
+
+arima_forecast_plot_4_17 <- arima_fullfit_4_17 %>%
+  modeltime_forecast(
+    new_data = test_s4_i17,
+    actual_data = s4_i17
+  ) %>%
+  plot_modeltime_forecast(.interactive = FALSE) +
+  labs(title = '3-Month Forecast, Store 4 Item 17')
+arima_forecast_plot_4_17
+
+arima_fullfit_6_13 <- cv_results_6_13 %>%
+  modeltime_refit(data = s6_i13)
+
+arima_forecast_plot_6_13 <- arima_fullfit_6_13 %>%
+  modeltime_forecast(
+    new_data = test_s6_i13,
+    actual_data = s6_i13
+  ) %>%
+  plot_modeltime_forecast(.interactive = FALSE) +
+  labs(title = '3-Month Forecast, Store 6 Item 13')
+arima_forecast_plot_6_13
+
+
+
+
+# Plots
+plotly::subplot(cv_results_vis_4_17, cv_results_vis_6_13, arima_forecast_plot_4_17, arima_forecast_plot_6_13, nrows = 2)
+
+# Four-Way Plot
+fourway <- (cv_results_vis_4_17 + cv_results_vis_6_13) / (arima_forecast_plot_4_17 + arima_forecast_plot_6_13)
+fourway
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
