@@ -683,16 +683,143 @@ plotly::subplot(cv_results_vis_4_17, cv_results_vis_6_13, prophet_fullfit_plot_4
 fourway <- (cv_results_vis_4_17 + cv_results_vis_6_13) / (prophet_fullfit_plot_4_17 + prophet_fullfit_plot_6_13)
 fourway
 
+#################################################################
+#################################################################
+# BOOSTING                                          #############
+#################################################################
+#################################################################
 
+# Libraries
+library(tidyverse)
+library(tidymodels)
+library(modeltime)
+library(timetk)
+library(vroom)
+library(embed)
+library(bonsai)
+library(lightgbm)
 
+# Load Data
+train <- vroom("train.csv")
+test <- vroom("test.csv")
 
+# Recipe
+# Create Recipe
+rec <- recipe(sales~., data=train) %>%
+  step_date(date, features=c("dow", "month", "decimal", "doy", "year", "quarter")) %>%
+  step_range(date_doy, min=0, max=pi) %>%
+  step_mutate(sinDOY=sin(date_doy), cosDOY=cos(date_doy)) %>%
+  step_mutate(season = factor(case_when(
+    between(month(date), 3, 5) ~ "Spring",
+    between(month(date), 6, 8) ~ "Summer",
+    between(month(date), 9, 11) ~ "Fall",
+    TRUE ~ "Winter"
+  ))) %>%
+  step_lencode_mixed(all_nominal_predictors(), outcome=vars(sales)) %>%
+  step_rm(date, item, store) %>%
+  step_normalize(all_numeric_predictors())
 
+# Prep, Bake, and View Recipe
+prepped <- prep(rec)
+head(bake(prepped, train), 3)
 
+# Set seed for reproducibility
+set.seed(17)
 
+# Generate 5 random indices
+indices <- sample(nrow(train), 5, replace = TRUE)
 
+# Extract 'store' and 'item' values using the random indices
+random_pairs <- data.frame(
+  store = train$store[indices],
+  item = train$item[indices]
+)
 
+# Display the random pairs
+print(random_pairs)
 
+# Loop through each random pair
+for (i in 1:nrow(random_pairs)) {
+  pair <- random_pairs[i, ]
+  filter_result <- train %>%
+    filter(store == pair$store, item == pair$item)
+  
+  # Create a variable with a dynamic name
+  assign(paste0("s", pair$store, "_i", pair$item), filter_result)
+}
 
+# General Model Testing---------------------------
+
+# Create a Boost model specification
+bst_spec <- boost_tree(trees = 1000, 
+                       tree_depth = tune(), 
+                       learn_rate = tune()) %>%
+  set_engine("lightgbm") %>%
+  set_mode("regression")
+
+# Create a Boost Workflow
+bst_wf <- workflow() %>%
+  add_recipe(rec) %>%
+  add_model(bst_spec)
+
+# Set up Boost tuning grid
+bst_grid <- grid_regular(
+  tree_depth(range = c(2, 4)),
+  learn_rate(range = c(0, .1), trans=NULL),
+  levels = 5
+)
+
+# Specific Model Texting-----------------------------------------------------
+
+# Split data for cross-validation (CV) for boost
+s1_i8_folds <- vfold_cv(s1_i8, v = 5, repeats = 1)
+s8_i3_folds <- vfold_cv(s8_i3, v = 5, repeats = 1)
+s5_i42_folds <- vfold_cv(s5_i42, v = 5, repeats = 1)
+s3_i23_folds <- vfold_cv(s3_i23, v = 5, repeats = 1)
+s8_i44_folds <- vfold_cv(s8_i44, v = 5, repeats = 1)
+
+# Run cross-validation for boost
+s1_i8_cv_results <- bst_wf %>%
+  tune_grid(resamples = s1_i8_folds,
+            grid = bst_grid,
+            metrics = metric_set(smape))
+s8_i3_cv_results <- bst_wf %>%
+  tune_grid(resamples = s8_i3_folds,
+            grid = bst_grid,
+            metrics = metric_set(smape))
+s5_i42_cv_results <- bst_wf %>%
+  tune_grid(resamples = s5_i42_folds,
+            grid = bst_grid,
+            metrics = metric_set(smape))
+s3_i23_cv_results <- bst_wf %>%
+  tune_grid(resamples = s3_i23_folds,
+            grid = bst_grid,
+            metrics = metric_set(smape))
+s8_i44_cv_results <- bst_wf %>%
+  tune_grid(resamples = s8_i44_folds,
+            grid = bst_grid,
+            metrics = metric_set(smape))
+
+# Find best tuning parameters (boost)
+s1_i8_best_tune <- s1_i8_cv_results %>%
+  select_best("smape")
+s8_i3_best_tune <- s8_i3_cv_results %>%
+  select_best("smape")
+s5_i42_best_tune <- s5_i42_cv_results %>%
+  select_best("smape")
+s3_i23_best_tune <- s3_i23_cv_results %>%
+  select_best("smape")
+s8_i44_best_tune <- s8_i44_cv_results %>%
+  select_best("smape")
+
+# Display
+s1_i8_best_tune
+s8_i3_best_tune
+s5_i42_best_tune
+s3_i23_best_tune
+s8_i44_best_tune
+# Tree Depth = 2
+# Learning Rate = .025
 
 
 
