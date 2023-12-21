@@ -8,9 +8,14 @@
 ####################################################################################################
 ####################################################################################################
 
+
+
 ########################################################################
 ########################################################################
 #############################
+
+# Use these bookends if parallelizing long processes
+
 # Start run in parallel
 # cl <- makePSOCKcluster(3)
 # registerDoParallel(cl)
@@ -21,32 +26,44 @@
 ########################################################################
 ########################################################################
 
+
+
 #################################################################
 #################################################################
 # EDA                                               #############
 #################################################################
 #################################################################
 
+# Load Libraries
 library(vroom)
 library(tidyverse)
 library(timetk)
 library(patchwork)
 
+# Load Data
 train <- vroom("train.csv")
 test <- vroom("test.csv")
 
-# Time Series Plots for 4 different store-item combos
+
+
+# Time Series Plots for 4 different store-item combos because I can't feasibly do all store-item combos
+# Store 1 Item 1
 train[train$store == 1 & train$item == 1, ] %>%
   plot_time_series(date, sales, .interactive = FALSE)
 
+# Store 2 Item 2
 train[train$store == 2 & train$item == 2, ] %>%
   plot_time_series(date, sales, .interactive = FALSE)
 
+# Store 3 Item 3
 train[train$store == 3 & train$item == 3, ] %>%
   plot_time_series(date, sales, .interactive = FALSE)
 
+# Store 4 Item 4
 train[train$store == 4 & train$item == 4, ] %>%
   plot_time_series(date, sales, .interactive = FALSE)
+
+
 
 # ACF (autocorrelation function plots) for the same
 # 4 different store-item combos
@@ -66,6 +83,8 @@ acf_4_4 <- train[train$store == 4 & train$item == 4, ] %>%
   pull(sales) %>%
   forecast::ggAcf(.) + ggtitle("ACF for Store 4 Item 4")
 
+
+
 # Four-way plot of ACF plots to show differences
 # in the autocorrelation structure for the different
 # items and justify treating the problem as 200
@@ -73,6 +92,8 @@ acf_4_4 <- train[train$store == 4 & train$item == 4, ] %>%
 # store-item combo)
 fourway_acf <- (acf_1_1 + acf_2_2) / (acf_3_3 + acf_4_4)
 fourway_acf
+
+
 
 ###################################################################################
 ###################################################################################
@@ -82,7 +103,7 @@ fourway_acf
 
 ### Load Data and Packages ###
 
-# Packages
+# Load Packages
 library(vroom)
 library(tidyverse)
 library(timetk)
@@ -99,12 +120,11 @@ library(stacks)
 library(dbarts)
 library(xgboost)
 
-
-# Data
+# Load Data
 train <- vroom("train.csv")
 test <- vroom("test.csv")
 
-# Subset store-item combo w my favorite numbers
+# Subset store-item combo w my favorite numbers bc I can't feasibly do all combos
 storeItem <- train %>%
   filter(store == 4, item == 17)
 
@@ -147,17 +167,23 @@ fourway
 
 # Create Recipe
 rec <- recipe(sales ~ ., data = storeItem) %>%
+  # Remove store and item
   step_rm(c('store', 'item')) %>%
+  # Expand date into week, month, and quarter
   step_date(date, features = c('week', 'month', 'quarter')) %>%
+  # Turn integer predictors into factors
   step_mutate_at(all_integer_predictors(), fn = factor) %>%
+  # Create season factor variable
   step_mutate(season = factor(case_when(
     between(month(date), 3, 5) ~ "Spring",
     between(month(date), 6, 8) ~ "Summer",
     between(month(date), 9, 11) ~ "Fall",
     TRUE ~ "Winter"
   ))) %>%
+  # Create a cumulative sales feature
   step_mutate(cumulative_sales = cumsum(sales)) %>%
-  step_dummy(all_nominal_predictors()) # Make nominal predictors into dummy variables
+  # Turn all nominal predictors into dummy variables
+  step_dummy(all_nominal_predictors())
 
 # Prep, Bake, and View Recipe
 prepped <- prep(rec)
@@ -167,15 +193,14 @@ bake(prepped, storeItem)
 
 ### Model: Random Forest ###
 
-# Model
+# Set UP Model
 rf_model <- rand_forest(mtry = tune(),
                               min_n = tune(),
-                              trees = 500) %>% # Type of Model
-  set_engine("ranger") %>% # What R function to use
-  set_mode("regression")
+                              trees = 500) %>% # 500 trees; tune mtry and min_n
+  set_engine("ranger") %>% # Use ranger function
+  set_mode("regression") # Regression bc target variable is quantitative
 
-
-# Workflow
+# Set up Workflow
 rf_workflow <- workflow() %>%
   add_recipe(rec) %>%
   add_model(rf_model)
@@ -183,9 +208,10 @@ rf_workflow <- workflow() %>%
 # Tuning grid
 tuning_grid <- grid_regular(mtry(range = c(1, 7)), # Grid of values to tune over
                             min_n(),
-                            levels = 5) # levels = L means L^2 total tuning possibilities
+                            levels = 5)
 
-folds <- vfold_cv(storeItem, # Split data for CV
+# Split data for CV
+folds <- vfold_cv(storeItem,
                   v = 5, # 5 folds
                   repeats = 1)
 
@@ -195,15 +221,18 @@ cv_results <- rf_workflow %>%
             grid = tuning_grid,
             metrics = metric_set(smape))
 
-# Find Best Tuning Parameters
+# Find Best Tuning Parameters to Optimize SMAPE
 best_tune <- cv_results %>%
   select_best("smape")
 best_tune
 # mtry = 7, min_n = 2
 
+# Look at SMAPE for Best Tuning Parameters
 cv_results %>% collect_metrics() %>%
   filter(.metric == "smape")
 # mean for best_tune is 18.6
+
+
 
 #################################################################
 #################################################################
@@ -221,20 +250,18 @@ library(patchwork)
 
 
 
-
 # Get Data
 
 # Load Data
 train <- vroom("train.csv")
 test <- vroom("test.csv")
 
-# Subset two store-item combos w my favorite numbers
+# Subset two store-item combos w my favorite numbers because I can't feasibly/quickly do all combos 
 s4_i17 <- train %>%
   filter(store == 4, item == 17)
 
 s6_i13 <- train %>%
   filter(store == 6, item == 13)
-
 
 
 
@@ -260,7 +287,7 @@ cv_preds_6_13
 
 
 
-# Exponential smoothing
+# Exponential Smoothing
 
 # ES for store 4 item 17
 es_model_4_17 <- exp_smoothing() %>%
@@ -300,9 +327,7 @@ cv_results_vis_6_13
 
 
 
-
 # Refit to all data then forecast for store 4 item 17
-
 es_fullfit_4_17 <- cv_results_4_17 %>%
   modeltime_refit(data = s4_i17)
 
@@ -317,6 +342,8 @@ es_fullfit_plot_4_17 <- es_fullfit_4_17 %>%
   modeltime_forecast(h = '3 months', actual_data = s4_i17) %>%
   plot_modeltime_forecast(.interactive = FALSE)
 es_fullfit_plot_4_17
+
+
 
 # Refit to all data then forecast for store 6 item 13
 es_fullfit_6_13 <- cv_results_6_13 %>%
@@ -336,13 +363,14 @@ es_fullfit_plot_6_13
 
 
 
-
 # Plots
 plotly::subplot(cv_results_vis_4_17, cv_results_vis_6_13, es_fullfit_plot_4_17, es_fullfit_plot_6_13, nrows = 2)
 
 # Four-Way Plot
 fourway <- (cv_results_vis_4_17 + cv_results_vis_6_13) / (es_fullfit_plot_4_17 + es_fullfit_plot_6_13)
 fourway
+
+
 
 #################################################################
 #################################################################
@@ -366,14 +394,13 @@ library(ggplot2)
 
 
 
-
 # Get Data
 
 # Load Data
 train <- vroom("train.csv")
 test <- vroom("test.csv")
 
-# Subset two store-item combos w my favorite numbers
+# Subset two store-item combos w my favorite numbers bc I can't quickly work with all combos
 s4_i17 <- train %>%
   filter(store == 4, item == 17)
 
@@ -388,19 +415,22 @@ test_s6_i13 <- test %>%
 
 
 
-
 # Recipe for Linear Model Part
+
 # Create Recipe
 rec <- recipe(sales ~ ., data = s4_i17) %>%
+  # Remove store and item
   step_rm(c('store', 'item')) %>%
+  # Convert all integer predictors into factors
   step_mutate_at(all_integer_predictors(), fn = factor) %>%
+  # Create a variable of cumulative sales
   step_mutate(cumulative_sales = cumsum(sales)) %>%
-  step_dummy(all_nominal_predictors()) # Make nominal predictors into dummy variables
+  # Turn nominal predictors into dummy variables
+  step_dummy(all_nominal_predictors())
 
 # Prep, Bake, and View Recipe
 prepped <- prep(rec)
 bake(prepped, s4_i17)
-
 
 
 
@@ -426,7 +456,6 @@ cv_preds_6_13
 
 
 
-
 # ARIMA
 
 # ARIMA Model
@@ -449,7 +478,6 @@ arima_wf_6_13 <- workflow() %>%
   add_recipe(rec) %>%
   add_model(arima_model) %>%
   fit(data = training(cv_split_6_13))
-
 
 
 
@@ -482,8 +510,9 @@ cv_results_vis_6_13
 
 
 
+# Refit Best Model to Entire Data and Predict for Each Combo
 
-# Refit Best Model to Entire Data and Predict
+# S4 I17
 arima_fullfit_4_17 <- cv_results_4_17 %>%
   modeltime_refit(data = s4_i17)
 
@@ -496,6 +525,7 @@ arima_forecast_plot_4_17 <- arima_fullfit_4_17 %>%
   labs(title = '3-Month Forecast, Store 4 Item 17')
 arima_forecast_plot_4_17
 
+# S6 I13
 arima_fullfit_6_13 <- cv_results_6_13 %>%
   modeltime_refit(data = s6_i13)
 
@@ -510,13 +540,14 @@ arima_forecast_plot_6_13
 
 
 
-
 # Plots
 plotly::subplot(cv_results_vis_4_17, cv_results_vis_6_13, arima_forecast_plot_4_17, arima_forecast_plot_6_13, nrows = 2)
 
 # Four-Way Plot
 fourway <- (cv_results_vis_4_17 + cv_results_vis_6_13) / (arima_forecast_plot_4_17 + arima_forecast_plot_6_13)
 fourway
+
+
 
 #################################################################
 #################################################################
@@ -540,14 +571,13 @@ library(ggplot2)
 
 
 
-
 # Get Data
 
 # Load Data
 train <- vroom("train.csv")
 test <- vroom("test.csv")
 
-# Subset two store-item combos w my favorite numbers
+# Subset two store-item combos w my favorite numbers; This is quicker and more manageable than all combos
 s4_i17 <- train %>%
   filter(store == 4, item == 17)
 
@@ -559,7 +589,6 @@ test_s4_i17 <- test %>%
 
 test_s6_i13 <- test %>%
   filter(store == 6, item == 13)
-
 
 
 
@@ -586,8 +615,7 @@ cv_preds_6_13
 
 
 
-
-# PROPHET 4:17
+# PROPHET for S4 I17
 
 # ES for store 4 item 17
 prophet_model_4_17 <- prophet_reg() %>%
@@ -609,12 +637,7 @@ cv_results_vis_4_17 <- cv_results_4_17 %>%
 cv_results_vis_4_17
 
 
-
-
-
-
-
-# PROPHET 6:13
+# PROPHET for S6 I13
 
 # ES for store 6 item 13
 prophet_model_6_13 <- prophet_reg() %>%
@@ -656,6 +679,7 @@ prophet_fullfit_plot_4_17 <- prophet_fullfit_4_17 %>%
   labs(title = '3-Month Forecast, Store 4 Item 17')
 prophet_fullfit_plot_4_17
 
+
 # Refit to all data then forecast for store 6 item 13
 prophet_fullfit_6_13 <- cv_results_6_13 %>%
   modeltime_refit(data = s6_i13)
@@ -675,7 +699,6 @@ prophet_fullfit_plot_6_13
 
 
 
-
 # Plots
 plotly::subplot(cv_results_vis_4_17, cv_results_vis_6_13, prophet_fullfit_plot_4_17, prophet_fullfit_plot_6_13, nrows = 2)
 
@@ -689,7 +712,7 @@ fourway
 #################################################################
 #################################################################
 
-# Libraries
+# Load Libraries -------------
 library(tidyverse)
 library(tidymodels)
 library(modeltime)
@@ -699,29 +722,45 @@ library(embed)
 library(bonsai)
 library(lightgbm)
 
-# Load Data
+
+
+# Load Data -------------
 train <- vroom("train.csv")
 test <- vroom("test.csv")
 
-# Recipe
+
+
+# Recipe -------------
+
 # Create Recipe
 rec <- recipe(sales~., data=train) %>%
+  # Expand date into dow, month, decimal, doy, year, and quarter
   step_date(date, features=c("dow", "month", "decimal", "doy", "year", "quarter")) %>%
+  # Set doy to the range [0, pi]
   step_range(date_doy, min=0, max=pi) %>%
+  # Create variables holding values equal to sin(doy) and cos(doy) to account for sine and cosine shaped trends
   step_mutate(sinDOY=sin(date_doy), cosDOY=cos(date_doy)) %>%
+  # Create a factor variable for season
   step_mutate(season = factor(case_when(
     between(month(date), 3, 5) ~ "Spring",
     between(month(date), 6, 8) ~ "Summer",
     between(month(date), 9, 11) ~ "Fall",
     TRUE ~ "Winter"
   ))) %>%
+  # Target encode all nominal predictors
   step_lencode_mixed(all_nominal_predictors(), outcome=vars(sales)) %>%
+  # Remove date, item, and store
   step_rm(date, item, store) %>%
+  # Normalize all numeric predictors so they have mean = 0 and SD = 1
   step_normalize(all_numeric_predictors())
 
 # Prep, Bake, and View Recipe
 prepped <- prep(rec)
 head(bake(prepped, train), 3)
+
+
+
+# Randomly Select 5 Store-Item Combos for Testing -------------
 
 # Set seed for reproducibility
 set.seed(17)
@@ -748,14 +787,16 @@ for (i in 1:nrow(random_pairs)) {
   assign(paste0("s", pair$store, "_i", pair$item), filter_result)
 }
 
+
+
 # General Model Testing---------------------------
 
 # Create a Boost model specification
-bst_spec <- boost_tree(trees = 1000, 
+bst_spec <- boost_tree(trees = 1000, # Keep trees at 1000 and tune tree_depth and learn_rate
                        tree_depth = tune(), 
                        learn_rate = tune()) %>%
-  set_engine("lightgbm") %>%
-  set_mode("regression")
+  set_engine("lightgbm") %>% # Use function lightgbm
+  set_mode("regression") # Regression bc target variable is quantitative
 
 # Create a Boost Workflow
 bst_wf <- workflow() %>%
@@ -769,16 +810,18 @@ bst_grid <- grid_regular(
   levels = 5
 )
 
-# Specific Model Texting-----------------------------------------------------
+
+
+# Specific Model Testing-----------------------------------------------------
 
 # Split data for cross-validation (CV) for boost
-s1_i8_folds <- vfold_cv(s1_i8, v = 5, repeats = 1)
+s1_i8_folds <- vfold_cv(s1_i8, v = 5, repeats = 1) # 5 folds for each CV
 s8_i3_folds <- vfold_cv(s8_i3, v = 5, repeats = 1)
 s5_i42_folds <- vfold_cv(s5_i42, v = 5, repeats = 1)
 s3_i23_folds <- vfold_cv(s3_i23, v = 5, repeats = 1)
 s8_i44_folds <- vfold_cv(s8_i44, v = 5, repeats = 1)
 
-# Run cross-validation for boost
+# Run cross-validation for all 5 boosted models
 s1_i8_cv_results <- bst_wf %>%
   tune_grid(resamples = s1_i8_folds,
             grid = bst_grid,
@@ -800,7 +843,7 @@ s8_i44_cv_results <- bst_wf %>%
             grid = bst_grid,
             metrics = metric_set(smape))
 
-# Find best tuning parameters (boost)
+# Find best tuning parameters to optimize smape for each store-item combo
 s1_i8_best_tune <- s1_i8_cv_results %>%
   select_best("smape")
 s8_i3_best_tune <- s8_i3_cv_results %>%
@@ -812,7 +855,7 @@ s3_i23_best_tune <- s3_i23_cv_results %>%
 s8_i44_best_tune <- s8_i44_cv_results %>%
   select_best("smape")
 
-# Display
+# Display Best Tune Parameters to Find Consensus
 s1_i8_best_tune
 s8_i3_best_tune
 s5_i42_best_tune
@@ -821,6 +864,10 @@ s8_i44_best_tune
 # Tree Depth = 2
 # Learning Rate = .025
 
+# Now plug these tuning parameters into a Kaggle notebook to submit for all store-item combos
+# https://www.kaggle.com/code/rwolff17/store-item-demand-boosted
+
+
 
 #################################################################
 #################################################################
@@ -828,7 +875,7 @@ s8_i44_best_tune
 #################################################################
 #################################################################
 
-# Libraries
+# Load Libraries -----------------------
 library(tidyverse)
 library(tidymodels)
 library(modeltime)
@@ -839,29 +886,45 @@ library(bonsai)
 library(lightgbm)
 library(xgboost)
 
-# Load Data
+
+
+# Load Data -----------------------
 train <- vroom("train.csv")
 test <- vroom("test.csv")
 
-# Recipe
+
+
+# Recipe -----------------------
+
 # Create Recipe
 rec <- recipe(sales~., data=train) %>%
+  # Expand date into dow, month, decimal, doy, year, and quarter
   step_date(date, features=c("dow", "month", "decimal", "doy", "year", "quarter")) %>%
+  # Set doy to the range [0, pi]
   step_range(date_doy, min=0, max=pi) %>%
+  # Create variables holding values equal to sin(doy) and cos(doy) to account for sine and cosine shaped trends
   step_mutate(sinDOY=sin(date_doy), cosDOY=cos(date_doy)) %>%
+  # Create a factor variable for season
   step_mutate(season = factor(case_when(
     between(month(date), 3, 5) ~ "Spring",
     between(month(date), 6, 8) ~ "Summer",
     between(month(date), 9, 11) ~ "Fall",
     TRUE ~ "Winter"
   ))) %>%
+  # Target encode all nominal predictors
   step_lencode_mixed(all_nominal_predictors(), outcome=vars(sales)) %>%
+  # Remove date, item, and store
   step_rm(date, item, store) %>%
+  # Normalize all numeric predictors so they have mean = 0 and SD = 1
   step_normalize(all_numeric_predictors())
 
 # Prep, Bake, and View Recipe
 prepped <- prep(rec)
 head(bake(prepped, train), 3)
+
+
+
+# Randomly Generate 5 Store-Item Combos for Testing --------------
 
 # Set seed for reproducibility
 set.seed(17)
@@ -888,15 +951,18 @@ for (i in 1:nrow(random_pairs)) {
   assign(paste0("s", pair$store, "_i", pair$item), filter_result)
 }
 
+
+
+
 # General Model Testing---------------------------
 
 # Create a boosted model specification
-xgb_spec <- boost_tree(trees = 1000, 
+xgb_spec <- boost_tree(trees = 1000, # Use 1000 trees and tune tree_depth, min_n, and learn_rate
                        tree_depth = tune(), 
                        min_n = tune(), 
                        learn_rate = tune()) %>%
-  set_engine("xgboost") %>%
-  set_mode("regression")
+  set_engine("xgboost") %>% # Use xgboost function
+  set_mode("regression") # Regression bc target variable is quantitative
 
 # Create a Boost Workflow
 xgb_wf <- workflow() %>%
@@ -913,14 +979,14 @@ xgb_grid <- grid_regular(
 
 # Specific Model Texting-----------------------------------------------------
 
-# Split data for cross-validation (CV) for boost
-s1_i8_folds <- vfold_cv(s1_i8, v = 5, repeats = 1)
+# Split data for cross-validation (CV) for each model
+s1_i8_folds <- vfold_cv(s1_i8, v = 5, repeats = 1) # 5 folds in CV for each store-item combo
 s8_i3_folds <- vfold_cv(s8_i3, v = 5, repeats = 1)
 s5_i42_folds <- vfold_cv(s5_i42, v = 5, repeats = 1)
 s3_i23_folds <- vfold_cv(s3_i23, v = 5, repeats = 1)
 s8_i44_folds <- vfold_cv(s8_i44, v = 5, repeats = 1)
 
-# Run cross-validation for boost
+# Run cross-validation for each combo
 s1_i8_cv_results <- xgb_wf %>%
   tune_grid(resamples = s1_i8_folds,
             grid = xgb_grid,
@@ -942,7 +1008,7 @@ s8_i44_cv_results <- xgb_wf %>%
             grid = xgb_grid,
             metrics = metric_set(smape))
 
-# Find best tuning parameters (boost)
+# Find best tuning parameters to optimize SMAPE for each store-item combo
 s1_i8_best_tune <- s1_i8_cv_results %>%
   select_best("smape")
 s8_i3_best_tune <- s8_i3_cv_results %>%
@@ -954,7 +1020,7 @@ s3_i23_best_tune <- s3_i23_cv_results %>%
 s8_i44_best_tune <- s8_i44_cv_results %>%
   select_best("smape")
 
-# Display
+# Display Best Tuning Parameters for each Store-Item Combo to find Consensus
 s1_i8_best_tune
 s8_i3_best_tune
 s5_i42_best_tune
@@ -963,3 +1029,14 @@ s8_i44_best_tune
 # min_n = 5
 # Tree Depth = 2
 # Learning Rate = .01
+
+# Now plug these tuning parameters into a Kaggle notebook to submit for all store-item combos
+# https://www.kaggle.com/code/rwolff17/store-item-demand-xgboost
+
+
+
+#################################################################
+#################################################################
+# END OF CODE                                       #############
+#################################################################
+#################################################################
